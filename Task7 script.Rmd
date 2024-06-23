@@ -1,0 +1,336 @@
+---
+title: "Task 7"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# Prerequisites
+
+## Import libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(car)
+library(rstatix)
+```
+
+## Import datasets
+
+```{r}
+urlP <- "https://raw.githubusercontent.com/WHPAN0108/BHT-DataScience-S24/main/data_clean/data/patient_info.csv"
+urlH <- "https://raw.githubusercontent.com/WHPAN0108/BHT-DataScience-S24/main/data_clean/data/date.csv"
+
+patients <- read.csv(urlP)
+hospital <- read.csv(urlH)
+
+head(patients)
+head(hospital)
+```
+
+# Data Clean & EDA
+
+## Task 1
+
+### Replace missing BMI values with the median BMI for the corresponding gender.
+
+Calculate the BMI for male and female seperately.
+Exclude na-values.
+
+```{r}
+BMImaleMedian <- median( (subset(patients, Sex %in% c('Male') & !is.na(BMI))$BMI ) )
+BMIfemaleMedian <- median( (subset(patients, Sex %in% c('Female') & !is.na(BMI))$BMI ) )
+
+print(sprintf("Male median BMI is: %f and female median BMI is: %g", BMImaleMedian, BMIfemaleMedian))
+```
+
+Replace BMI values that are na and check afterwards, if any na values for BMI are left.
+
+```{r}
+patients$BMI[patients$Sex %in% c('Male') & is.na(patients$BMI)] <- BMImaleMedian
+patients$BMI[patients$Sex %in% c('Female') & is.na(patients$BMI)] <- BMIfemaleMedian
+subset(patients, is.na(BMI))
+
+```
+
+## Task 2
+
+### Perform a sanity check on all columns in both files, and remove any samples that do not pass.
+
+#### patients
+
+Do a summary and check for unusual or unrealistic values.
+
+```{r}
+summary(patients)
+
+```
+
+Anomalies: The minimum age is 6, but the dataset should only contain patients that are 40 or older.
+All BMI values should be between 15-60
+
+------------------------------------------------------------------------
+
+Checking for further na-values.
+These can be found for "Smoking_status".
+
+```{r}
+patients %>% summarize_all(~ sum(is.na(.)))
+
+
+```
+
+------------------------------------------------------------------------
+
+Check distinct values for colums "Sex", "Smoking_status","Disease".
+There are only the expected values.
+
+```{r}
+patients %>% distinct(Sex)
+patients %>% distinct(Smoking_status)
+patients %>% distinct(Disease)
+```
+
+#### hospital visits
+
+Previous to checking transform the VisitDate to date-format.
+
+```{r}
+hospital <- hospital %>% mutate(v_date = as.Date(VisitDate, "%d/%m/%Y"))
+summary(hospital)
+hospital %>% summarize_all(~ sum(is.na(.)))
+
+```
+
+Anomalies: There is at least one visit date before 1950 and one after the end of 2023.
+
+------------------------------------------------------------------------
+
+data clean: hospital visits
+
+```{r}
+
+# Remove lines with visits before 1950 or after the end of 2023 or with na-values.
+hospital <- hospital %>% filter(!v_date < "1950/01/01", !v_date > "2023/12/31", !is.na(v_date))
+
+```
+
+------------------------------------------------------------------------
+
+data clean: patients
+
+```{r}
+#Remove lines where age is <40 or BMI not between 15 to 60 or Smoking_Status is na
+patients <- patients %>% filter(!Age < 40 , !BMI < 15 , !BMI > 60, !is.na(Smoking_status))
+
+```
+
+## Task 3
+
+### Calculate the number of visits each patient made since 1/1/2020. If the VisitDate is missing, it indicates no visits during this period.
+
+```{r}
+hospitalvisits <- hospital %>% select(Participant_ID, v_date) %>% filter(v_date >= "2020/1/1") %>% group_by(Participant_ID) %>% count(Participant_ID, sort = TRUE)
+
+hospitalvisits <- rename(hospitalvisits, "NumberOfVisits" = n)
+
+# Show results table
+hospitalvisits %>% filter(TRUE)
+```
+
+## Task 4
+
+### Create a summary table and/or chart showing the number of visits for each month (irrespective of the year).
+
+```{r}
+# Add a new colums with only the month of the visitDate
+hospital <- hospital %>% mutate(month = format(v_date, "%m") )
+
+# Result as a table
+hospital %>% select(month) %>% group_by(month) %>% count(month)
+
+# Save result separately
+VisitsPerMonth <- hospital %>% select(month) %>% group_by(month) %>% count(month)
+
+# Draw a bar diagram
+ggplot(data=VisitsPerMonth, aes(x=month, y=n)) + geom_bar(stat="identity")
+
+```
+
+## Task 5
+
+### add a new column "age group " to split the age to 5 categories: 40-49, 50-59, 60-69, and above 70)
+
+```{r}
+patients <- patients %>% mutate(AgeGroup = case_when(
+                                           (Age >= 40 & Age <= 49) ~ "40-49"
+                                         , (Age >= 50 & Age <= 59) ~ "50-59"
+                                         , (Age >= 60 & Age <= 69) ~ "60-69"
+                                         , (Age >= 70) ~ "above 70"
+                                         , TRUE ~ NA) )
+
+# Show result table
+patients %>% filter(TRUE)
+
+
+
+```
+
+## Task 6
+
+### Merge the two files to include the columns: Patient_ID, Sex, Age, BMI, Smoking_status, Number_of_visits, Disease and age group
+
+```{r}
+patients_overall =
+  patients %>% 
+  left_join(hospitalvisits,
+    by = join_by(Participant_ID),
+    copy = FALSE,
+    keep = NULL
+  ) %>% 
+  mutate(NumberOfVisits = case_when(is.na(NumberOfVisits) ~ 0, TRUE ~ NumberOfVisits)) 
+```
+
+# Statistics
+
+## Task 1
+
+### Compare the BMI between the healthy and control groups using a box or violin plot.
+
+```{r}
+# Convert Disease from numeric to a factor
+#  factor 1 means disease, 2 means healthy
+patients$Disease <- as.factor(patients$Disease)
+
+# Draw a boxplot
+ggplot(data=patients,aes(x=Disease, y=BMI, color=Disease)) + geom_boxplot() +theme_minimal()
+
+```
+
+Conclusion: The BMI results between patients with and without a disease look mostly the same.
+There is no obvious difference.
+Median, upper and lower quartile etc. are nearly the same.
+
+## Task 2
+
+### Examine if the proportion of smoking status differs between the healthy and control groups.
+
+Chi-square test
+
+```{r}
+#  factor 1 means disease, 2 means healthy
+patients_chi <- table(patients$Disease, patients$Smoking_status)
+#Table of Disease and smoking status:
+print(patients_chi)
+chi_squared_test <- chisq.test(patients_chi)
+
+#Chi-Squared Test Results:
+print(chi_squared_test)
+```
+
+Conclusion: The p-value is not less than 0.05, which indicates, that there is NO significant difference in smoking status between the compared groups.
+
+## Task 3
+
+### Analyze the relationship between smoking status and the number of hospital visits, separately for the disease and healthy groups, and for the overall population.
+
+ANOVA Test
+
+```{r}
+#  factor 1 means disease, 2 means healthy
+
+#H0: There is no dependency between the smoking status and the number of visits
+#Ha: There is an significant influence of the smoking status on the number of hospital visits.
+
+# ANOVA for each group
+anova_healthy <- aov(NumberOfVisits ~ Smoking_status, data = patients_overall %>% filter(Disease == 2))
+anova_disease <- aov(NumberOfVisits ~ Smoking_status, data = patients_overall %>% filter(Disease == 1))
+anova_overall <- aov(NumberOfVisits ~ Smoking_status, data = patients_overall )
+
+#ANOVA Results per Group:
+summary(anova_healthy)
+summary(anova_disease)
+summary(anova_overall)
+
+
+
+```
+
+The p-value (Pr(\>F)) of all three tests differs quite a lot, but none of the p-values is below 0.05.
+Therefor there is no significant dependency between the smoking status and the number of hospital visits.
+You can reject Ha.
+
+## Task 4
+
+### Determine if the number of visits is higher in the disease group compared to the healthy group.
+
+H0: The number of visits in the disease group is not higher than in the healthy group
+
+Ha: The number of visits in the disease group is higher/greater than in the healthy group
+
+```{r}
+
+patients_overall %>% select(Disease, NumberOfVisits) %>% group_by(Disease) %>% get_summary_stats(NumberOfVisits, type = "mean_sd")
+
+boxplot(NumberOfVisits~Disease, data=patients_overall) 
+
+t_test <- t.test(NumberOfVisits ~ Disease, data = patients_overall, alternative = "greater" )
+
+
+print(t_test)
+
+
+```
+
+Conclusion: The summary, as well as the boxplot show pretty much no difference in mean-values.
+The p-value is not below 0.05.
+You can reject Ha.
+
+## Task 5
+
+### Calculate the disease prevalence (number of sick / total number population) across different age groups in our dataset, and test if the prevalence is different across the group
+
+```{r}
+#  factor 1 means disease, 2 means healthy
+
+# get the number of people with disease (disease == 1) per AgeGroup
+DiseasePerAgeGroup <- patients_overall %>% group_by(AgeGroup) %>% filter(Disease == 1) %>% count(Disease)
+
+# calculate the prevelance per AgeGroup
+DiseasePrevelance <-
+  patients_overall %>% 
+    group_by(AgeGroup) %>% 
+    summarise(Total = n()) %>% 
+    left_join(DiseasePerAgeGroup,
+              by = join_by(AgeGroup),
+              copy = FALSE,
+              keep = NULL
+              ) %>% 
+    select(AgeGroup, Total, n) %>%
+    mutate(prevelance = n/Total)
+
+
+#prevelance_chi <- table(DiseasePrevelance$AgeGroup, DiseasePrevelance$prevelance)
+#Table of AgeGroup and prevelance:
+#print(prevelance_chi)
+#chi_squared_test_prevelance <- chisq.test(prevelance_chi)
+
+#Chi-Squared Test Results:
+#print(chi_squared_test_prevelance)
+
+disease_chi <- table(patients$AgeGroup, patients$Disease)
+#Table of AgeGroup and DiseaseStatus:
+print(disease_chi)
+chi_squared_test_disease <- chisq.test(disease_chi)
+
+#Chi-Squared Test Results:
+print(chi_squared_test_disease)
+
+```
+
+Conclusion: The p-value is above 0.05 so there is no significant relationship between disease status and AgeGroup.
